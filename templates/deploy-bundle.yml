@@ -1,0 +1,100 @@
+# =====================================================================
+# Databricks Asset Bundle — Central Deploy Template
+# Usage: reference from any repo via:
+#   stages:
+#     - template: templates/deploy-bundle.yml@central
+#       parameters:
+#         repoName: <your-repo-name>
+# =====================================================================
+
+parameters:
+  - name: repoName
+    type: string
+  - name: workspaceRoot
+    type: string
+    default: '/Workspace/projects'
+  - name: prodVarsGroup
+    type: string
+    default: 'databricks-prod-vars'
+
+stages:
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/prod')
+    variables:
+      - group: ${{ parameters.prodVarsGroup }}
+    jobs:
+      - job: DeployToProd
+        displayName: 'Export from Dev & Deploy to Prod'
+        pool:
+          vmImage: 'ubuntu-latest'
+        variables:
+          bundleOutputDir: '$(Build.ArtifactStagingDirectory)/bundle'
+        steps:
+          - checkout: self
+            displayName: 'Checkout source repo (prod branch)'
+            path: source-repo
+
+          - checkout: central
+            displayName: 'Checkout central-pipeline'
+            path: central-pipeline
+
+          - task: UsePythonVersion@0
+            displayName: 'Setup Python 3.9'
+            inputs:
+              versionSpec: '3.9'
+
+          - script: |
+              pip install pyyaml databricks-sdk
+            displayName: 'Install dependencies'
+
+          # --- Export jobs from DEV workspace ---
+          - script: |
+              export DATABRICKS_HOST="$DEV_WS_HOST"
+              export DATABRICKS_TOKEN="$DEV_WS_TOKEN"
+              rm -rf "$(Pipeline.Workspace)/source-repo/jobs/"* 2>/dev/null || true
+              python $(Pipeline.Workspace)/central-pipeline/scripts/export_jobs_v2.py \
+                --repo-name "${{ parameters.repoName }}" \
+                --output-dir "$(Pipeline.Workspace)/source-repo/jobs" \
+                --verbose
+            displayName: 'Export jobs from dev workspace'
+            env:
+              DEV_WS_HOST: $(DEV_DATABRICKS_HOST)
+              DEV_WS_TOKEN: $(DEV_DATABRICKS_TOKEN)
+
+          # --- Organize bundle ---
+          - script: |
+              mkdir -p $(bundleOutputDir)
+              echo "=== Jobs exported from dev ==="
+              ls -la "$(Pipeline.Workspace)/source-repo/jobs/" || echo "No jobs directory"
+              echo "=============================="
+              python $(Pipeline.Workspace)/central-pipeline/scripts/organize_bundle_v3.py \
+                --source "$(Pipeline.Workspace)/source-repo" \
+                --output "$(bundleOutputDir)/${{ parameters.repoName }}" \
+                --name "${{ parameters.repoName }}" \
+                --workspace-root "${{ parameters.workspaceRoot }}" \
+                --verbose
+            displayName: 'Organize bundle'
+            env:
+              RUN_AS_USER: $(RUN_AS_USER)
+              RUN_AS_SERVICE_PRINCIPAL: $(RUN_AS_SERVICE_PRINCIPAL)
+
+          - script: |
+              curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+            displayName: 'Install Databricks CLI'
+
+          - script: |
+              cd "$(bundleOutputDir)/${{ parameters.repoName }}"
+              databricks bundle validate -t prod
+            displayName: 'Validate bundle (prod)'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+          - script: |
+              cd "$(bundleOutputDir)/${{ parameters.repoName }}"
+              databricks bundle deploy -t prod
+            displayName: 'Deploy to prod'
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST)
+              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
