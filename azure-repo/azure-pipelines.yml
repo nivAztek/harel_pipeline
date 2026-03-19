@@ -1,0 +1,20 @@
+# <ShortProjectName> - Deploy Pipeline
+trigger:
+  branches:
+    include:
+      - prod
+  paths:
+    exclude:
+      - README.md
+
+resources:
+  repositories:
+    - repository: central
+      type: git
+      name: <AzureDevOpsProject>/central-pipeline
+      ref: main
+
+stages:
+  - template: templates/deploy-bundle.yml@central
+    parameters:
+      repoName: <repo-name-as-tagged-in-databricks>
