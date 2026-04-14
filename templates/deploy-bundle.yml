@@ -4,7 +4,13 @@
 #   stages:
 #     - template: templates/deploy-bundle.yml@central
 #       parameters:
-#         repoName: <your-repo-name>
+#         repoName: $(Build.Repository.Name)
+#         runAsServicePrincipal: 'my-sp-app-id'   # optional — overrides Variable Group
+#         runAsUser: 'user@company.com'           # optional — overrides Variable Group
+#         authMethod: oauth                        # optional — 'token' (default) | 'oauth'
+#
+# OAuth requires in Variable Group: DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET
+# Token requires in Variable Group: DATABRICKS_TOKEN
 # =====================================================================
 
 parameters:
@@ -16,6 +22,15 @@ parameters:
   - name: prodVarsGroup
     type: string
     default: 'databricks-prod-vars'
+  - name: runAsUser
+    type: string
+    default: ''
+  - name: runAsServicePrincipal
+    type: string
+    default: ''
+  - name: authMethod
+    type: string
+    default: 'token'    # 'token' | 'oauth'
 
 stages:
   - stage: DeployProd
@@ -76,8 +91,8 @@ stages:
                 --verbose
             displayName: 'Organize bundle'
             env:
-              RUN_AS_USER: $(RUN_AS_USER)
-              RUN_AS_SERVICE_PRINCIPAL: $(RUN_AS_SERVICE_PRINCIPAL)
+              RUN_AS_USER: ${{ coalesce(parameters.runAsUser, '$(RUN_AS_USER)') }}
+              RUN_AS_SERVICE_PRINCIPAL: ${{ coalesce(parameters.runAsServicePrincipal, '$(RUN_AS_SERVICE_PRINCIPAL)') }}
 
           - script: |
               curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
@@ -89,7 +104,11 @@ stages:
             displayName: 'Validate bundle (prod)'
             env:
               DATABRICKS_HOST: $(DATABRICKS_HOST)
-              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+              ${{ if eq(parameters.authMethod, 'oauth') }}:
+                ARM_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                ARM_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+              ${{ if ne(parameters.authMethod, 'oauth') }}:
+                DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
 
           - script: |
               cd "$(bundleOutputDir)/${{ parameters.repoName }}"
@@ -97,4 +116,8 @@ stages:
             displayName: 'Deploy to prod'
             env:
               DATABRICKS_HOST: $(DATABRICKS_HOST)
-              DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+              ${{ if eq(parameters.authMethod, 'oauth') }}:
+                ARM_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                ARM_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+              ${{ if ne(parameters.authMethod, 'oauth') }}:
+                DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
