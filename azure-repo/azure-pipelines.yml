@@ -17,4 +17,4 @@ resources:
 stages:
   - template: templates/deploy-bundle.yml@central
     parameters:
-      repoName: <repo-name-as-tagged-in-databricks>
+      repoName: $(Build.Repository.Name)
